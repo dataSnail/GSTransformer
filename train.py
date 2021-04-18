@@ -46,11 +46,7 @@ def benchmark_task_val(args, writer=None, feat='node-label'):
         if args.method == 'GSTransformer':
             print('Method: GSTransformer')
             model = encoders.GSTransformer(
-                    max_num_nodes,
-                    input_dim, args.hidden_dim, args.output_dim, args.num_classes, args.num_gc_layers,
-                    args.hidden_dim, assign_ratio=args.assign_ratio, num_pooling=args.num_pool,
-                    bn=args.bn, dropout=args.dropout, linkpred=args.linkpred, args=args,
-                    assign_input_dim=assign_input_dim).cuda()
+                    input_dim, 8, args.hidden_dim, args.num_gc_layers, args.num_classes).cuda()
 
         _, val_accs = train(train_dataset, model, args, val_dataset=val_dataset, test_dataset=None,
             writer=writer)
@@ -91,12 +87,12 @@ def train(dataset, model, args, same_feat=True, val_dataset=None, test_dataset=N
         for batch_idx, data in enumerate(dataset):
             begin_time = time.time()
             model.zero_grad()
-            seq = Variable(data['sequence'].float(), requires_grad=False).cuda()
-            h0 = Variable(data['feats'].float(), requires_grad=False).cuda()
+            seq_feats = Variable(data['seq_feats'].float(), requires_grad=False).cuda()
+            # h0 = Variable(data['feats'].float(), requires_grad=False).cuda()
             label = Variable(data['label'].long()).cuda()
             batch_num_nodes = data['num_nodes'].int().numpy() if mask_nodes else None
 
-            ypred = model(h0, 1, 64, 4, assign_x=assign_input)
+            ypred = model(seq_feats)
 
             if not args.method == 'soft-assign' or not args.linkpred:
                 loss = model.loss(ypred, label)

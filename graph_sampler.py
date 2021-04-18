@@ -13,13 +13,14 @@ class GraphSampler(torch.utils.data.Dataset):
         self.adj_all = []
         self.graph_seq_all = []
         self.len_all = []
-        self.feature_all = []
+        self.feature_all = []  # 按seq中id选择feature的列表
+        self.seq_feature_all = []
         self.label_all = []
         
         self.assign_feat_all = []
 
         if max_num_nodes == 0:
-            self.max_num_nodes = max([G.number_of_nodes() for G in G_list])  # 在一张图中选最大的就是节点数量，已经在load的时候重新映射过了。
+            self.max_num_nodes = max([G.number_of_nodes() for G in G_list])  # 选择所有图中最多的节点数量，在一张图中选最大的就是节点数量，已经在load的时候重新映射过了。
             print("The max node id : ",self.max_num_nodes)
         else:
             self.max_num_nodes = max_num_nodes
@@ -35,7 +36,8 @@ class GraphSampler(torch.utils.data.Dataset):
                 adj = np.matmul(np.matmul(sqrt_deg, adj), sqrt_deg)
             self.adj_all.append(adj)
 
-            self.graph_seq_all.append(self.graph2seq(G))  # get the graph sequence
+            seq = self.graph2seq(G)  # get the graph sequence
+            self.graph_seq_all.append(seq)
 
             self.len_all.append(G.number_of_nodes())
             self.label_all.append(G.graph['label'])
@@ -96,6 +98,11 @@ class GraphSampler(torch.utils.data.Dataset):
                         np.hstack((np.identity(self.max_num_nodes), self.feature_all[-1])) )
             else:
                 self.assign_feat_all.append(self.feature_all[-1])
+
+            seq_feats = []  # adding sequence features
+            for u in seq:
+                seq_feats.append(self.feature_all[-1][u])
+            self.seq_feature_all.append(seq_feats)
             
         self.feat_dim = self.feature_all[0].shape[1]
         self.assign_feat_dim = self.assign_feat_all[0].shape[1]
@@ -116,6 +123,7 @@ class GraphSampler(torch.utils.data.Dataset):
         # use all nodes for aggregation (baseline)
 
         return {'sequence': graph_seq_padded,  # 'adj':adj_padded,  # 图的邻接矩阵
+                'seq_feats': self.seq_feature_all[idx].copy(),
                 'feats': self.feature_all[idx].copy(),  # 图中节点的属性矩阵 max_num_nodes x feat_dim
                 'label': self.label_all[idx],  # 图的label，ground-truth
                 'num_nodes': num_nodes,  # 单个图中节点的数量 （真实数量，没有padding过的）

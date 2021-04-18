@@ -59,7 +59,7 @@ class PositionalEncoding(nn.Module):
 
 
 class GSTransformer(nn.Module):
-    def __init__(self, feats, nhead, nhid, nlayers, nclass, dropout=0.5, fine_tune=False):
+    def __init__(self, ninp, nhead, nhid, nlayers, nclass, dropout=0.5, fine_tune=False):
         """
         :param feats:  predefined feature matrix
         :param ninp:   the dimension of input
@@ -75,17 +75,17 @@ class GSTransformer(nn.Module):
         except:
             raise ImportError('TransformerEncoder module does not exist in PyTorch 1.1 or lower.')
         self.model_type = 'Transformer'
-        self.ninp = feats.size(1)  # 输入维度
+        # self.ninp = feats.size(1)  # 输入维度
         self.seq_mask = None
-        self.pos_encoder = PositionalEncoding(self.ninp, dropout)  # 位置编码层 ninp is the dimension of input
-        encoder_layers = TransformerEncoderLayer(self.ninp, nhead, nhid, dropout)
+        self.pos_encoder = PositionalEncoding(ninp, dropout)  # 位置编码层 ninp is the dimension of input
+        encoder_layers = TransformerEncoderLayer(ninp, nhead, nhid, dropout)
         self.transformer_encoder = TransformerEncoder(encoder_layers, nlayers)
 
         # emebedding  layer using predefined feats
         # https://discuss.pytorch.org/t/can-we-use-pre-trained-word-embeddings-for-weight-initialization-in-nn-embedding/1222/2
-        self.embedding = nn.Embedding(feats.size(0), feats.size(1))
-        self.embedding.weight = nn.Parameter(feats)
-        self.embedding.weight.requires_grad = fine_tune
+        # self.embedding = nn.Embedding(feats.size(0), feats.size(1))
+        # self.embedding.weight = nn.Parameter(feats)
+        # self.embedding.weight.requires_grad = fine_tune
 
         self.pred = self.build_pred_layers(self.ninp, 0, nclass)
 
@@ -119,22 +119,22 @@ class GSTransformer(nn.Module):
             pred_model = nn.Sequential(*pred_layers)
         return pred_model
 
-    def forward(self, seq, has_mask=False):
-        cls = torch.ones(seq.size(0), self.ninp)  #
-        emb = self.embedding(seq)  # ntoken x ninp
-        torch.cat([cls, emb], dim=1)
+    def forward(self, seq_feats, has_mask=False):
+        cls = torch.ones(seq_feats.size(0), self.ninp)  #
+        # emb = self.embedding(seq)  # ntoken x ninp
+        emb = torch.cat([cls, seq_feats], dim=0)
 
         if has_mask:
             device = emb.device
-            if self.seq_mask is None or self.seq_mask.size(0) != len(seq):
-                mask = self._generate_square_subsequent_mask(len(seq)).to(device)
+            if self.seq_mask is None or self.seq_mask.size(0) != len(seq_feats):
+                mask = self._generate_square_subsequent_mask(len(seq_feats)).to(device)
                 self.seq_mask = mask
         else:
             self.src_mask = None
 
         emb = self.pos_encoder(emb)
         output = self.transformer_encoder(emb)
-        output = self.pred(output)
+        output = self.pred(output[0,:])
 
         return output
 
