@@ -46,7 +46,7 @@ def benchmark_task_val(args, writer=None, feat='node-label'):
         if args.method == 'GSTransformer':
             print('Method: GSTransformer')
             model = encoders.GSTransformer(
-                    input_dim, 8, args.hidden_dim, args.num_gc_layers, args.num_classes).cuda()
+                    input_dim, 1, args.hidden_dim, args.num_gc_layers, args.num_classes).cuda()
 
         _, val_accs = train(train_dataset, model, args, val_dataset=val_dataset, test_dataset=None,
             writer=writer)

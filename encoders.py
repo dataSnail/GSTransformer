@@ -39,7 +39,7 @@ class PositionalEncoding(nn.Module):
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
         pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)[:,:-1]
         pe = pe.unsqueeze(0).transpose(0, 1)
         self.register_buffer('pe', pe)
 
@@ -87,7 +87,7 @@ class GSTransformer(nn.Module):
         # self.embedding.weight = nn.Parameter(feats)
         # self.embedding.weight.requires_grad = fine_tune
 
-        self.pred = self.build_pred_layers(self.ninp, 0, nclass)
+        self.pred = self.build_pred_layers(ninp, 0, nclass)
 
         self.init_weights()
 
@@ -107,7 +107,7 @@ class GSTransformer(nn.Module):
         transformer后的预测层
         """
         pred_input_dim = pred_input_dim * num_aggs
-        if len(pred_hidden_dims) == 0:
+        if pred_hidden_dims == 0:
             pred_model = nn.Linear(pred_input_dim, label_dim)
         else:
             pred_layers = []
