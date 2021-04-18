@@ -9,7 +9,7 @@ import os
 import shutil
 import argparse
 import numpy as np
-
+import torch
 from tensorboardX import SummaryWriter
 
 import load_data

@@ -102,6 +102,8 @@ class GraphSampler(torch.utils.data.Dataset):
             seq_feats = []  # adding sequence features
             for u in seq:
                 seq_feats.append(self.feature_all[-1][u])
+            if len(seq) < self.max_num_nodes:
+                seq_feats.append(np.zeros((self.max_num_nodes-len(seq), len(self.feature_all[-1][0]))))
             self.seq_feature_all.append(seq_feats)
             
         self.feat_dim = self.feature_all[0].shape[1]
