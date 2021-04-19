@@ -10,6 +10,8 @@ import shutil
 import argparse
 import numpy as np
 import torch
+import torch.nn as nn
+import sklearn.metrics as metrics
 from tensorboardX import SummaryWriter
 
 import load_data
@@ -18,6 +20,40 @@ import gen.feat as featgen
 import gen.data as datagen
 import util
 import encoders
+
+import time
+from torch.autograd import Variable
+
+
+def evaluate(dataset, model, args, name='Validation', max_num_examples=None):
+    model.eval()
+
+    labels = []
+    preds = []
+    for batch_idx, data in enumerate(dataset):
+        seq_feats = Variable(data['seq_feats'].float(), requires_grad=False).cuda()
+        # h0 = Variable(data['feats'].float()).cuda()
+        labels.append(data['label'].long().numpy())
+        batch_num_nodes = data['num_nodes'].int().numpy()
+        # assign_input = Variable(data['assign_feats'].float(), requires_grad=False).cuda()
+
+        ypred = model(seq_feats)
+        _, indices = torch.max(ypred, 1)
+        preds.append(indices.cpu().data.numpy())
+
+        if max_num_examples is not None:
+            if (batch_idx + 1) * args.batch_size > max_num_examples:
+                break
+
+    labels = np.hstack(labels)
+    preds = np.hstack(preds)
+
+    result = {'prec': metrics.precision_score(labels, preds, average='macro'),
+              'recall': metrics.recall_score(labels, preds, average='macro'),
+              'acc': metrics.accuracy_score(labels, preds),
+              'F1': metrics.f1_score(labels, preds, average="micro")}
+    print(name, " accuracy:", result['acc'])
+    return result
 
 def benchmark_task_val(args, writer=None, feat='node-label'):
     all_vals = []

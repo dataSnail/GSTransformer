@@ -75,7 +75,7 @@ class GSTransformer(nn.Module):
         except:
             raise ImportError('TransformerEncoder module does not exist in PyTorch 1.1 or lower.')
         self.model_type = 'Transformer'
-        # self.ninp = feats.size(1)  # 输入维度
+        # self.ninp = ninp,  # feats.size(1)  # 输入维度
         self.seq_mask = None
         self.pos_encoder = PositionalEncoding(ninp, dropout)  # 位置编码层 ninp is the dimension of input
         encoder_layers = TransformerEncoderLayer(ninp, nhead, nhid, dropout)
@@ -106,6 +106,7 @@ class GSTransformer(nn.Module):
         """
         transformer后的预测层
         """
+        print('prediction layer: %s,%s,%s'%(pred_input_dim, pred_hidden_dims, label_dim))
         pred_input_dim = pred_input_dim * num_aggs
         if pred_hidden_dims == 0:
             pred_model = nn.Linear(pred_input_dim, label_dim)
@@ -120,9 +121,9 @@ class GSTransformer(nn.Module):
         return pred_model
 
     def forward(self, seq_feats, has_mask=False):
-        cls = torch.ones(seq_feats.size(0), self.ninp)  #
+        cls = torch.ones(seq_feats.size(0), 1, seq_feats.size(2)).cuda()  #
         # emb = self.embedding(seq)  # ntoken x ninp
-        emb = torch.cat([cls, seq_feats], dim=0)
+        emb = torch.cat([cls, seq_feats], dim=1)
 
         if has_mask:
             device = emb.device
@@ -134,11 +135,11 @@ class GSTransformer(nn.Module):
 
         emb = self.pos_encoder(emb)
         output = self.transformer_encoder(emb)
-        output = self.pred(output[0,:])
+        output = self.pred(output[:,0,:])
 
         return output
 
-    def loss(self, pred, label):
+    def loss(self, pred, label, type='softmax'):
         '''
         Args:
             batch_num_nodes: numpy array of number of nodes in each graph in the minibatch.

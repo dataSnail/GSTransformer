@@ -93,6 +93,8 @@ class GraphSampler(torch.utils.data.Dataset):
 
                 self.feature_all.append(g_feat)
 
+
+
             if assign_feat == 'id':
                 self.assign_feat_all.append(
                         np.hstack((np.identity(self.max_num_nodes), self.feature_all[-1])) )
@@ -102,10 +104,9 @@ class GraphSampler(torch.utils.data.Dataset):
             seq_feats = []  # adding sequence features
             for u in seq:
                 seq_feats.append(self.feature_all[-1][u])
-            if len(seq) < self.max_num_nodes:
-                seq_feats.append(np.zeros((self.max_num_nodes-len(seq), len(self.feature_all[-1][0]))))
+
             self.seq_feature_all.append(seq_feats)
-            
+
         self.feat_dim = self.feature_all[0].shape[1]
         self.assign_feat_dim = self.assign_feat_all[0].shape[1]
 
@@ -122,10 +123,15 @@ class GraphSampler(torch.utils.data.Dataset):
         graph_seq_padded = np.zeros(self.max_num_nodes)
         graph_seq_padded[:num_nodes] = graph_seq  # padding图的序列
 
+        seq_feats = self.seq_feature_all[idx]
+        num_nodes = len(seq_feats)
+        seq_feats_padded = np.zeros((self.max_num_nodes, 3))
+        seq_feats_padded[:num_nodes,:] = seq_feats  # padding图的序列
+
         # use all nodes for aggregation (baseline)
 
         return {'sequence': graph_seq_padded,  # 'adj':adj_padded,  # 图的邻接矩阵
-                'seq_feats': self.seq_feature_all[idx].copy(),
+                'seq_feats': seq_feats_padded,  # self.seq_feature_all[idx].copy(),
                 'feats': self.feature_all[idx].copy(),  # 图中节点的属性矩阵 max_num_nodes x feat_dim
                 'label': self.label_all[idx],  # 图的label，ground-truth
                 'num_nodes': num_nodes,  # 单个图中节点的数量 （真实数量，没有padding过的）
