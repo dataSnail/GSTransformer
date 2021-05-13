@@ -7,145 +7,151 @@
 
 import torch
 import math
-import torch.nn as nn
+from torch import nn, einsum
 from torch.nn import init
 import torch.nn.functional as F
+from einops import rearrange, repeat
+from einops.layers.torch import Rearrange
 
-import numpy as np
+# helpers
 
-# Temporarily leave PositionalEncoding module here. Will be moved somewhere else.
-class PositionalEncoding(nn.Module):
-    r"""Inject some information about the relative or absolute position of the tokens
-        in the sequence. The positional encodings have the same dimension as
-        the embeddings, so that the two can be summed. Here, we use sine and cosine
-        functions of different frequencies.
-    .. math::
-        \text{PosEncoder}(pos, 2i) = sin(pos/10000^(2i/d_model))
-        \text{PosEncoder}(pos, 2i+1) = cos(pos/10000^(2i/d_model))
-        \text{where pos is the word position and i is the embed idx)
-    Args:
-        d_model: the embed dim (required).
-        dropout: the dropout value (default=0.1).
-        max_len: the max. length of the incoming sequence (default=5000).
-    Examples:
-        >>> pos_encoder = PositionalEncoding(d_model)
-    """
+def pair(t):
+    return t if isinstance(t, tuple) else (t, t)
 
-    def __init__(self, d_model, dropout=0.1, max_len=5000):
-        super(PositionalEncoding, self).__init__()
-        self.dropout = nn.Dropout(p=dropout)
+# classes
 
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)[:,:-1]
-        pe = pe.unsqueeze(0).transpose(0, 1)
-        self.register_buffer('pe', pe)
+class PreNorm(nn.Module):
+    def __init__(self, dim, fn):
+        super().__init__()
+        self.norm = nn.LayerNorm(dim)
+        self.fn = fn
+    def forward(self, x, **kwargs):
+        return self.fn(self.norm(x), **kwargs)
+
+class FeedForward(nn.Module):
+    def __init__(self, dim, hidden_dim, dropout = 0.):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, dim),
+            nn.Dropout(dropout)
+        )
+    def forward(self, x):
+        return self.net(x)
+
+class Attention(nn.Module):
+    def __init__(self, dim, heads = 8, dim_head = 64, dropout = 0.):
+        super().__init__()
+        inner_dim = dim_head *  heads
+        project_out = not (heads == 1 and dim_head == dim)
+
+        self.heads = heads
+        self.scale = dim_head ** -0.5
+
+        self.attend = nn.Softmax(dim = -1)
+        self.to_qkv = nn.Linear(dim, inner_dim * 3, bias = False)
+
+        self.to_out = nn.Sequential(
+            nn.Linear(inner_dim, dim),
+            nn.Dropout(dropout)
+        ) if project_out else nn.Identity()
 
     def forward(self, x):
-        r"""Inputs of forward function
-        Args:
-            x: the sequence fed to the positional encoder model (required).
-        Shape:
-            x: [sequence length, batch size, embed dim]
-            output: [sequence length, batch size, embed dim]
-        Examples:
-            >>> output = pos_encoder(x)
-        """
+        b, n, _, h = *x.shape, self.heads
+        qkv = self.to_qkv(x).chunk(3, dim = -1)
+        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = h), qkv)
 
-        x = x + self.pe[:x.size(0), :]
-        return self.dropout(x)
+        dots = einsum('b h i d, b h j d -> b h i j', q, k) * self.scale
+
+        attn = self.attend(dots)
+
+        out = einsum('b h i j, b h j d -> b h i d', attn, v)
+        out = rearrange(out, 'b h n d -> b n (h d)')
+        return self.to_out(out)
+
+class Transformer(nn.Module):
+    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout = 0.):
+        super().__init__()
+        self.layers = nn.ModuleList([])
+        for _ in range(depth):
+            self.layers.append(nn.ModuleList([
+                PreNorm(dim, Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout)),
+                PreNorm(dim, FeedForward(dim, mlp_dim, dropout = dropout))
+            ]))
+    def forward(self, x):
+        for attn, ff in self.layers:
+            x = attn(x) + x
+            x = ff(x) + x
+        return x
 
 
 class GSTransformer(nn.Module):
-    def __init__(self, ninp, nhead, nhid, nlayers, nclass, dropout=0.5, fine_tune=False):
-        """
-        :param feats:  predefined feature matrix
-        :param ninp:   the dimension of input
-        :param nhead:  the head num
-        :param nhid:   the hidden dimension of encoder layer
-        :param nlayers:    the number of encoder layer
-        :param dropout:
-        :param fine_tune:   fine-tune the predefined feature matrix
-        """
+    def __init__(self, token_num, token_dim, dim, heads, mlp_dim, nlayers, nclass, pool='cls', dim_head=64, dropout=0.5, emb_dropout=0.):
         super(GSTransformer, self).__init__()
-        try:
-            from torch.nn import TransformerEncoder, TransformerEncoderLayer
-        except:
-            raise ImportError('TransformerEncoder module does not exist in PyTorch 1.1 or lower.')
         self.model_type = 'Transformer'
-        # self.ninp = ninp,  # feats.size(1)  # 输入维度
+
+        self.to_embedding = nn.Sequential(
+            nn.Linear(token_dim, dim),
+        )
+
+        self.pos_embedding = nn.Parameter(torch.randn(1, token_num + 1, dim))
+
+        self.cls_token = nn.Parameter(torch.randn(1, 1, dim))
+        self.dropout = nn.Dropout(emb_dropout)
+
         self.seq_mask = None
-        self.pos_encoder = PositionalEncoding(ninp, dropout)  # 位置编码层 ninp is the dimension of input
-        encoder_layers = TransformerEncoderLayer(ninp, nhead, nhid, dropout)
-        self.transformer_encoder = TransformerEncoder(encoder_layers, nlayers)
 
-        # emebedding  layer using predefined feats
-        # https://discuss.pytorch.org/t/can-we-use-pre-trained-word-embeddings-for-weight-initialization-in-nn-embedding/1222/2
-        # self.embedding = nn.Embedding(feats.size(0), feats.size(1))
-        # self.embedding.weight = nn.Parameter(feats)
-        # self.embedding.weight.requires_grad = fine_tune
+        self.transformer = Transformer(dim, nlayers, heads, dim_head, mlp_dim, dropout)
 
-        self.pred = self.build_pred_layers(ninp, 0, nclass)
+        self.pool = pool
+        self.to_latent = nn.Identity()
 
-        self.init_weights()
+        self.pred = nn.Sequential(
+                nn.LayerNorm(dim),
+                nn.Linear(dim, nclass)
+            )
 
-    def init_weights(self):
-        initrange = 0.1
-        # nn.init.uniform_(self.encoder.weight, -initrange, initrange)
-        # nn.init.zeros_(self.decoder.weight)
-        # nn.init.uniform_(self.decoder.weight, -initrange, initrange)
+    def _generate_seq_mask(self, bz, ntoken, num_nodes):
+        pad_mask = torch.ones((bz, ntoken), dtype=torch.bool)
 
-    def _generate_square_subsequent_mask(self, sz):
-        mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
-        mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
-        return mask
+        for index, item in enumerate(num_nodes):
+            pad_mask[index, item+1:] = 0  # 已经加上cls位了
+        return pad_mask
 
-    def build_pred_layers(self, pred_input_dim, pred_hidden_dims, label_dim, num_aggs=1):
-        """
-        transformer后的预测层
-        """
-        print('prediction layer: %s,%s,%s'%(pred_input_dim, pred_hidden_dims, label_dim))
-        pred_input_dim = pred_input_dim * num_aggs
-        if pred_hidden_dims == 0:
-            pred_model = nn.Linear(pred_input_dim, label_dim)
-        else:
-            pred_layers = []
-            for pred_dim in pred_hidden_dims:
-                pred_layers.append(nn.Linear(pred_input_dim, pred_dim))
-                pred_layers.append(self.act)
-                pred_input_dim = pred_dim
-            pred_layers.append(nn.Linear(pred_dim, label_dim))
-            pred_model = nn.Sequential(*pred_layers)
-        return pred_model
+    def forward(self, seq_feats, num_nodes, has_mask=True):
+        x = self.to_embedding(seq_feats)
+        b, n, _ = x.shape
+        cls_tokens = repeat(self.cls_token, '() n d -> b n d', b = b)
 
-    def forward(self, seq_feats, has_mask=False):
-        cls = torch.ones(seq_feats.size(0), 1, seq_feats.size(2)).cuda()  #
-        # emb = self.embedding(seq)  # ntoken x ninp
-        emb = torch.cat([cls, seq_feats], dim=1)
+        x = torch.cat((cls_tokens, x), dim=1)
+        x += self.pos_embedding[:, :(n + 1)]
+        x = self.dropout(x)
 
-        if has_mask:
-            device = emb.device
-            if self.seq_mask is None or self.seq_mask.size(0) != len(seq_feats):
-                mask = self._generate_square_subsequent_mask(len(seq_feats)).to(device)
-                self.seq_mask = mask
-        else:
-            self.src_mask = None
+        x = self.transformer(x)
 
-        emb = self.pos_encoder(emb)
-        output = self.transformer_encoder(emb)
-        output = self.pred(output[:,0,:])
+        x = x.mean(dim=1) if self.pool == 'mean' else x[:, 0]
 
-        return output
+        x = self.to_latent(x)
+        return self.pred(x)
+        # if has_mask:
+        #     device = emb.device
+        #     if self.seq_mask is None or self.seq_mask.size(0) != len(seq_feats):
+        #         print('using sequence padding mask...')
+        #         bz = emb.size(1)  # seq_feats.size(0)
+        #         ntoken = emb.size(0)  # seq_feats.size(1)+1
+        #         mask = self._generate_seq_mask(bz, ntoken, num_nodes).to(device)
+        #         self.seq_mask = mask
+        # else:
+        #     self.seq_mask = None
 
     def loss(self, pred, label, type='softmax'):
         '''
         Args:
             batch_num_nodes: numpy array of number of nodes in each graph in the minibatch.
         '''
-        eps = 1e-7
-
+        # print(pred.shape, label.shape)
         if type == 'softmax':
             loss = F.cross_entropy(pred, label, reduction='mean')
         elif type == 'margin':

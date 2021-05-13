@@ -43,5 +43,5 @@ def prepare_val_data(graphs, args, val_idx, max_nodes=0):
             num_workers=args.num_workers)
 
     return train_dataset_loader, val_dataset_loader, \
-            dataset_sampler.max_num_nodes, dataset_sampler.feat_dim, dataset_sampler.assign_feat_dim
+            dataset_sampler.max_num_nodes, dataset_sampler.feat_dim
 

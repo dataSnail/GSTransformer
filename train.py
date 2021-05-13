@@ -24,6 +24,12 @@ import encoders
 import time
 from torch.autograd import Variable
 
+import matplotlib
+import matplotlib.colors as colors
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+from matplotlib.figure import Figure
+
 
 def evaluate(dataset, model, args, name='Validation', max_num_examples=None):
     model.eval()
@@ -37,7 +43,7 @@ def evaluate(dataset, model, args, name='Validation', max_num_examples=None):
         batch_num_nodes = data['num_nodes'].int().numpy()
         # assign_input = Variable(data['assign_feats'].float(), requires_grad=False).cuda()
 
-        ypred = model(seq_feats)
+        ypred = model(seq_feats, batch_num_nodes)
         _, indices = torch.max(ypred, 1)
         preds.append(indices.cpu().data.numpy())
 
@@ -52,7 +58,7 @@ def evaluate(dataset, model, args, name='Validation', max_num_examples=None):
               'recall': metrics.recall_score(labels, preds, average='macro'),
               'acc': metrics.accuracy_score(labels, preds),
               'F1': metrics.f1_score(labels, preds, average="micro")}
-    print(name, " accuracy:", result['acc'])
+    print(name, " accuracy:%.4f"%result['acc'])
     return result
 
 def benchmark_task_val(args, writer=None, feat='node-label'):
@@ -76,13 +82,13 @@ def benchmark_task_val(args, writer=None, feat='node-label'):
             featgen_const.gen_node_features(G)
 
     for i in range(10):
-        train_dataset, val_dataset, max_num_nodes, input_dim, assign_input_dim = \
+        train_dataset, val_dataset, max_num_nodes, input_dim = \
                 cross_val.prepare_val_data(graphs, args, i, max_nodes=args.max_nodes)
 
         if args.method == 'GSTransformer':
             print('Method: GSTransformer')
             model = encoders.GSTransformer(
-                    input_dim, 1, args.hidden_dim, args.num_gc_layers, args.num_classes).cuda()
+                    max_num_nodes, input_dim, args.dim, args.num_heads, args.mlp_dim, args.num_trans_layers, args.num_classes).cuda()
 
         _, val_accs = train(train_dataset, model, args, val_dataset=val_dataset, test_dataset=None,
             writer=writer)
@@ -94,7 +100,7 @@ def benchmark_task_val(args, writer=None, feat='node-label'):
     print(np.argmax(all_vals))
 
 
-def train(dataset, model, args, same_feat=True, val_dataset=None, test_dataset=None, writer=None,
+def train(dataset, model, args, val_dataset=None, test_dataset=None, writer=None,
           mask_nodes=True):
     writer_batch_idx = [0, 3, 6, 9]
 
@@ -124,16 +130,16 @@ def train(dataset, model, args, same_feat=True, val_dataset=None, test_dataset=N
             begin_time = time.time()
             model.zero_grad()
             seq_feats = Variable(data['seq_feats'].float(), requires_grad=False).cuda()
-            # h0 = Variable(data['feats'].float(), requires_grad=False).cuda()
             label = Variable(data['label'].long()).cuda()
             batch_num_nodes = data['num_nodes'].int().numpy() if mask_nodes else None
 
-            ypred = model(seq_feats)
+            ypred = model(seq_feats, batch_num_nodes)
 
-            if not args.method == 'soft-assign' or not args.linkpred:
-                loss = model.loss(ypred, label)
-            else:
-                loss = model.loss(ypred, label, adj, batch_num_nodes)
+            loss = model.loss(ypred, label)
+            # if not args.method == 'soft-assign' or not args.linkpred:
+            #     loss = model.loss(ypred, label)
+            # else:
+            #     loss = model.loss(ypred, label, adj, batch_num_nodes)
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), args.clip)  # 梯度裁剪
             optimizer.step()
@@ -145,17 +151,17 @@ def train(dataset, model, args, same_feat=True, val_dataset=None, test_dataset=N
             total_time += elapsed
 
             # log once per XX epochs
-            if epoch % 10 == 0 and batch_idx == len(
-                    dataset) // 2 and args.method == 'soft-assign' and writer is not None:
-                log_assignment(model.assign_tensor, writer, epoch, writer_batch_idx)
-                if args.log_graph:
-                    log_graph(adj, batch_num_nodes, writer, epoch, writer_batch_idx, model.assign_tensor)
+            # if epoch % 10 == 0 and batch_idx == len(
+            #         dataset) // 2 and writer is not None:
+            #     log_assignment(model.assign_tensor, writer, epoch, writer_batch_idx)
+            #     if args.log_graph:
+            #         log_graph(adj, batch_num_nodes, writer, epoch, writer_batch_idx, model.assign_tensor)
         avg_loss /= batch_idx + 1
         if writer is not None:
             writer.add_scalar('loss/avg_loss', avg_loss, epoch)
             if args.linkpred:
                 writer.add_scalar('loss/linkpred_loss', model.link_loss, epoch)
-        print('Avg loss: ', avg_loss, '; epoch time: ', total_time)
+        print('[LOSS] Avg loss: %.4f ; epoch time: %.2f'% (avg_loss.item(), total_time))
         result = evaluate(dataset, model, args, name='Train', max_num_examples=100)
         train_accs.append(result['acc'])
         train_epochs.append(epoch)
@@ -176,7 +182,7 @@ def train(dataset, model, args, same_feat=True, val_dataset=None, test_dataset=N
             if test_dataset is not None:
                 writer.add_scalar('acc/test_acc', test_result['acc'], epoch)
 
-        print('Best val result: ', best_val_result)
+        print('【BEST】 val result: %.4f'%best_val_result['acc'])
         best_val_epochs.append(best_val_result['epoch'])
         best_val_accs.append(best_val_result['acc'])
         if test_dataset is not None:
@@ -194,7 +200,7 @@ def train(dataset, model, args, same_feat=True, val_dataset=None, test_dataset=N
     else:
         plt.plot(best_val_epochs, best_val_accs, 'bo')
         plt.legend(['train', 'val'])
-    plt.savefig(gen_train_plt_name(args), dpi=600)
+    # plt.savefig(gen_train_plt_name(args), dpi=600)
     plt.close()
     matplotlib.style.use('default')
 
@@ -267,14 +273,22 @@ def arg_parse():
             help='Feature used for encoder. Can be: id, deg')
     parser.add_argument('--input-dim', dest='input_dim', type=int,
             help='Input feature dimension')
+    parser.add_argument('--dim', dest='dim', type=int,
+            help='Input embedding dimension')
     parser.add_argument('--hidden-dim', dest='hidden_dim', type=int,
             help='Hidden dimension')
     parser.add_argument('--output-dim', dest='output_dim', type=int,
             help='Output dimension')
     parser.add_argument('--num-classes', dest='num_classes', type=int,
             help='Number of label classes')
+    parser.add_argument('--num-heads', dest='num_heads', type=int,
+            help='Head number of transformer')
     parser.add_argument('--num-gc-layers', dest='num_gc_layers', type=int,
             help='Number of graph convolution layers before each pooling')
+    parser.add_argument('--num-trans-layers', dest='num_trans_layers', type=int,
+            help='Number of Transformer layers')
+    parser.add_argument('--mlp-dim', dest='mlp_dim', type=int,
+            help='Input dimension of prediction layer')
     parser.add_argument('--nobn', dest='bn', action='store_const',
             const=False, default=True,
             help='Whether batch normalization is used')
@@ -301,7 +315,7 @@ def arg_parse():
                         lr=0.001,
                         clip=2.0,
                         batch_size=20,
-                        num_epochs=1000,
+                        num_epochs=3000,
                         train_ratio=0.8,
                         test_ratio=0.1,
                         num_workers=1,
@@ -309,6 +323,7 @@ def arg_parse():
                         hidden_dim=20,
                         output_dim=20,
                         num_classes=2,
+                        num_heads=8,
                         num_gc_layers=3,
                         dropout=0.0,
                         method='base',
@@ -333,7 +348,7 @@ def main():
     print('CUDA', prog_args.cuda)
 
     if prog_args.bmname is not None:
-        benchmark_task_val(prog_args, writer=writer)
+        benchmark_task_val(prog_args, writer=writer, feat='node-feat')
 
     writer.close()
 
