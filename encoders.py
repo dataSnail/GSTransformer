@@ -6,6 +6,7 @@
 '''
 
 import torch
+import numpy as np
 import math
 from torch import nn, einsum
 from torch.nn import init
@@ -58,12 +59,19 @@ class Attention(nn.Module):
             nn.Dropout(dropout)
         ) if project_out else nn.Identity()
 
-    def forward(self, x):
+    def forward(self, x, seq_mask=None):
         b, n, _, h = *x.shape, self.heads
         qkv = self.to_qkv(x).chunk(3, dim = -1)
         q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = h), qkv)
 
         dots = einsum('b h i d, b h j d -> b h i j', q, k) * self.scale
+
+        # mask
+        # print(dots.shape, seq_mask.shape, v.shape)
+        if not (seq_mask is None):
+            seq_mask = repeat(seq_mask[:, np.newaxis],'b () d -> b n d', n=dots.shape[2])
+            seq_mask = repeat(seq_mask[:,np.newaxis], 'b () n d -> b h n d',h=dots.shape[1])
+            dots = einsum('b h i j, b h i j->b h i j', dots, seq_mask)
 
         attn = self.attend(dots)
 
@@ -80,17 +88,18 @@ class Transformer(nn.Module):
                 PreNorm(dim, Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout)),
                 PreNorm(dim, FeedForward(dim, mlp_dim, dropout = dropout))
             ]))
-    def forward(self, x):
+    def forward(self, x, seq_mask=None):
         for attn, ff in self.layers:
-            x = attn(x) + x
+            x = attn(x, seq_mask=seq_mask) + x
             x = ff(x) + x
         return x
 
 
 class GSTransformer(nn.Module):
-    def __init__(self, token_num, token_dim, dim, heads, mlp_dim, nlayers, nclass, pool='cls', dim_head=64, dropout=0.5, emb_dropout=0.):
+    def __init__(self, token_num, token_dim, dim, heads, mlp_dim, nlayers, nclass, pool='cls', dim_head=64, dropout=0.5, emb_dropout=0., has_mask=False):
         super(GSTransformer, self).__init__()
         self.model_type = 'Transformer'
+        self.has_mask = has_mask
 
         self.to_embedding = nn.Sequential(
             nn.Linear(token_dim, dim),
@@ -120,7 +129,7 @@ class GSTransformer(nn.Module):
             pad_mask[index, item+1:] = 0  # 已经加上cls位了
         return pad_mask
 
-    def forward(self, seq_feats, num_nodes, has_mask=True):
+    def forward(self, seq_feats, num_nodes):
         x = self.to_embedding(seq_feats)
         b, n, _ = x.shape
         cls_tokens = repeat(self.cls_token, '() n d -> b n d', b = b)
@@ -129,22 +138,25 @@ class GSTransformer(nn.Module):
         x += self.pos_embedding[:, :(n + 1)]
         x = self.dropout(x)
 
-        x = self.transformer(x)
+        if self.has_mask:
+            device = x.device
+            if self.seq_mask is None or self.seq_mask.size(0) != len(seq_feats):
+                # print('using sequence padding mask...')
+                bz = x.size(0)  # seq_feats.size(0)
+                ntoken = x.size(1)  # seq_feats.size(1)+1
+                mask = self._generate_seq_mask(bz, ntoken, num_nodes).to(device)
+                self.seq_mask = mask
+        else:
+            # print('Do NOT use sequence padding mask...')
+            self.seq_mask = None
+
+        x = self.transformer(x,self.seq_mask)
 
         x = x.mean(dim=1) if self.pool == 'mean' else x[:, 0]
 
         x = self.to_latent(x)
         return self.pred(x)
-        # if has_mask:
-        #     device = emb.device
-        #     if self.seq_mask is None or self.seq_mask.size(0) != len(seq_feats):
-        #         print('using sequence padding mask...')
-        #         bz = emb.size(1)  # seq_feats.size(0)
-        #         ntoken = emb.size(0)  # seq_feats.size(1)+1
-        #         mask = self._generate_seq_mask(bz, ntoken, num_nodes).to(device)
-        #         self.seq_mask = mask
-        # else:
-        #     self.seq_mask = None
+
 
     def loss(self, pred, label, type='softmax'):
         '''
@@ -186,3 +198,43 @@ class GSTransformer(nn.Module):
         #     #print('linkloss: ', self.link_loss)
         #     return loss + self.link_loss
         return loss
+
+
+class GSRNN(nn.Module):
+    def __init__(self, token_dim, dim, hidden_size, num_layers, nclass, net_type=0):  # nonlinearity='tanh', bias=False, batch_first=True, dropout=0., bidirectional=False
+        super(GSRNN, self).__init__()
+        self.net_type=net_type
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+
+        self.to_embedding = nn.Sequential(
+            nn.Linear(token_dim, dim),
+        )
+
+        if self.net_type == 1:
+            self.model_type = 'GSLSTM'
+            self.rnn = nn.LSTM(dim, self.hidden_size, self.num_layers, batch_first=True)
+        else:
+            self.model_type = 'GSRNN'
+            self.rnn = nn.RNN(dim, self.hidden_size, self.num_layers, batch_first=True)
+
+        self.to_latent = nn.Identity()
+        self.pred = nn.Sequential(
+                nn.LayerNorm(self.hidden_size),
+                nn.Linear(self.hidden_size, nclass)
+            )
+
+    def forward(self, seq_feats, num_nodes):
+        x = self.to_embedding(seq_feats)
+        if self.net_type == 1:
+            h0 = torch.zeros(self.num_layers,x.size(0),self.hidden_size).cuda()
+            c0 = torch.zeros(self.num_layers,x.size(0),self.hidden_size).cuda()
+            y, (h, c) = self.rnn(x, (h0,c0))
+        else:
+            y, h = self.rnn(x)
+
+        y = self.to_latent(y)
+        return self.pred(y[:,-1,:])
+
+    def loss(self, pred, label):
+        return F.cross_entropy(pred, label, reduction='mean')

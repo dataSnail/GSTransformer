@@ -27,7 +27,7 @@ def prepare_val_data(graphs, args, val_idx, max_nodes=0):
 
     # minibatch
     dataset_sampler = GraphSampler(train_graphs, normalize=False, max_num_nodes=max_nodes,
-            features=args.feature_type)
+            features=args.feature_type, sort_type=args.sort_type)
     train_dataset_loader = torch.utils.data.DataLoader(
             dataset_sampler, 
             batch_size=args.batch_size, 
@@ -35,7 +35,7 @@ def prepare_val_data(graphs, args, val_idx, max_nodes=0):
             num_workers=args.num_workers)
 
     dataset_sampler = GraphSampler(val_graphs, normalize=False, max_num_nodes=max_nodes,
-            features=args.feature_type)
+            features=args.feature_type, sort_type=args.sort_type)
     val_dataset_loader = torch.utils.data.DataLoader(
             dataset_sampler, 
             batch_size=args.batch_size, 

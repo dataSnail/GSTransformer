@@ -86,10 +86,22 @@ def benchmark_task_val(args, writer=None, feat='node-label'):
                 cross_val.prepare_val_data(graphs, args, i, max_nodes=args.max_nodes)
 
         if args.method == 'GSTransformer':
-            print('Method: GSTransformer')
+            print('Method: %s, Mask_flag: %s' % (args.method, args.no_mask))
             model = encoders.GSTransformer(
-                    max_num_nodes, input_dim, args.dim, args.num_heads, args.mlp_dim, args.num_trans_layers, args.num_classes).cuda()
-
+                    max_num_nodes, input_dim, args.dim, args.num_heads, args.mlp_dim, args.num_trans_layers, args.num_classes,
+                    pool=args.pool, dropout=args.dropout, has_mask=args.no_mask).cuda()
+        elif args.method == 'GSRNN':
+            # RNN-liked methods args.mlp_dim: hidden_size; args.num_trans_layers: num_layers
+            print('Method: %s'%args.method)
+            model = encoders.GSRNN(
+                    input_dim, args.dim, args.mlp_dim, args.num_trans_layers, args.num_classes, 0).cuda()
+        elif args.method == 'GSLSTM':
+            print('Method: %s'%args.method)
+            model = encoders.GSRNN(
+                input_dim, args.dim, args.mlp_dim, args.num_trans_layers, args.num_classes, 1).cuda()
+        else:
+            print("ERROR Methods!!!")
+            exit(1)
         _, val_accs = train(train_dataset, model, args, val_dataset=val_dataset, test_dataset=None,
             writer=writer)
         all_vals.append(np.array(val_accs))
@@ -103,8 +115,12 @@ def benchmark_task_val(args, writer=None, feat='node-label'):
 def train(dataset, model, args, val_dataset=None, test_dataset=None, writer=None,
           mask_nodes=True):
     writer_batch_idx = [0, 3, 6, 9]
-
-    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=0.001)
+    p_c = 0
+    for pp in model.parameters():
+        if pp.requires_grad:
+            p_c+=1
+    print('---------------',p_c)
+    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr)
     iter = 0
     best_val_result = {
         'epoch': 0,
@@ -140,6 +156,7 @@ def train(dataset, model, args, val_dataset=None, test_dataset=None, writer=None
             #     loss = model.loss(ypred, label)
             # else:
             #     loss = model.loss(ypred, label, adj, batch_num_nodes)
+            # print(model.parameters())
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), args.clip)  # 梯度裁剪
             optimizer.step()
@@ -182,7 +199,7 @@ def train(dataset, model, args, val_dataset=None, test_dataset=None, writer=None
             if test_dataset is not None:
                 writer.add_scalar('acc/test_acc', test_result['acc'], epoch)
 
-        print('【BEST】 val result: %.4f'%best_val_result['acc'])
+        print('【BEST】 val result: %.4f, Epoch:%s.'%(best_val_result['acc'],best_val_result['epoch']))
         best_val_epochs.append(best_val_result['epoch'])
         best_val_accs.append(best_val_result['acc'])
         if test_dataset is not None:
@@ -218,9 +235,16 @@ def gen_prefix(args):
         name += '_ar' + str(int(args.assign_ratio*100))
         if args.linkpred:
             name += '_lp'
+    elif args.method == 'GSTransformer':
+        name += '_dim' + str(args.dim) + '_mlpDim' + str(args.mlp_dim)
+        name += '_tansLayer' + str(args.num_trans_layers) + '_heads'+str(args.num_heads) + '_lr'+str(args.lr)
+        name += '_'+str(args.pool) + '_' + str(args.sort_type) + '_nomask'
+        if args.linkpred:
+            name += '_lp'
     else:
         name += '_l' + str(args.num_gc_layers)
-    name += '_h' + str(args.hidden_dim) + '_o' + str(args.output_dim)
+    if not (args.method == 'GSTransformer'):
+        name += '_h' + str(args.hidden_dim) + '_o' + str(args.output_dim)
     if not args.bias:
         name += '_nobias'
     if len(args.name_suffix) > 0:
@@ -297,12 +321,19 @@ def arg_parse():
     parser.add_argument('--nobias', dest='bias', action='store_const',
             const=False, default=True,
             help='Whether to add bias. Default to True.')
+    parser.add_argument('--no-mask', dest='no_mask', action='store_const',
+            const=False, default=True,
+            help="Whether to add mask to sequence.")
     parser.add_argument('--no-log-graph', dest='log_graph', action='store_const',
             const=False, default=True,
             help='Whether disable log graph')
 
     parser.add_argument('--method', dest='method',
             help='Method. Possible values: base, base-set2set, soft-assign')
+    parser.add_argument('--sort-type', dest='sort_type',
+                        help='The type of transfering graph to sequence [degree0, degree1, bfs]')
+    parser.add_argument('--pool', dest='pool',
+            help='pool cls or mean')
     parser.add_argument('--name-suffix', dest='name_suffix',
             help='suffix added to the output filename')
 
@@ -325,8 +356,10 @@ def arg_parse():
                         num_classes=2,
                         num_heads=8,
                         num_gc_layers=3,
-                        dropout=0.0,
+                        dropout=0.5,
                         method='base',
+                        pool='cls',
+                        sort_type='degree1',
                         name_suffix='',
                         assign_ratio=0.1,
                         num_pool=1

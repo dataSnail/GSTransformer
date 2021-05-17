@@ -11,7 +11,7 @@ import util
 class GraphSampler(torch.utils.data.Dataset):
     ''' Sample graphs and nodes in graph
     '''
-    def __init__(self, G_list, features='default', normalize=True, max_num_nodes=0):
+    def __init__(self, G_list, features='default', normalize=True, max_num_nodes=0, sort_type='degree1'):
         self.adj_all = []
         self.graph_seq_all = []
         self.len_all = []
@@ -38,7 +38,7 @@ class GraphSampler(torch.utils.data.Dataset):
             self.adj_all.append(adj)
 
             # get the graph sequence
-            seq = self.graph2seq(G)
+            seq = self.graph2seq(G, sort_type)
             self.graph_seq_all.append(seq)
 
             self.len_all.append(G.number_of_nodes())
@@ -105,19 +105,35 @@ class GraphSampler(torch.utils.data.Dataset):
         self.feat_dim = self.feature_all[0].shape[1]
 
     @staticmethod
-    def graph2seq(G, sort_type='degree'):
-        if sort_type == 'degree':
-            def cmp(n1, n2):
-                if G.degree(n1) > G.degree(n2):
-                    return 1
-                if G.degree(n1) < G.degree(n2):
-                    return -1
-                if G.degree(n1) == G.degree(n2):
-                    return 0
+    def graph2seq(G, sort_type):
+        def cmp(n1, n2):
+            if G.degree(n1) > G.degree(n2):
+                return 1
+            if G.degree(n1) < G.degree(n2):
+                return -1
+            if G.degree(n1) == G.degree(n2):
+                return 0
 
+        if sort_type == 'degree1':  # max->min
             return sorted(G.nodes(), key=cmp_to_key(cmp), reverse=1)
+        elif sort_type == 'degree0':  # min->max
+            return sorted(G.nodes(), key=cmp_to_key(cmp), reverse=0)
+        elif sort_type == 'bfs':
+            root_node = sorted(G.nodes(), key=cmp_to_key(cmp))[-1]
+            return list(nx.bfs_tree(G, root_node))
+        elif sort_type == 'bfs_r':
+            root_node = random.choice(list(G.nodes()))
+            return list(nx.bfs_tree(G, root_node))
+        elif sort_type == 'dfs':
+            root_node = sorted(G.nodes(), key=cmp_to_key(cmp))[-1]
+            return list(nx.dfs_tree(G, root_node))
+        elif sort_type == 'dfs_r':
+            root_node = random.choice(list(G.nodes()))
+            return list(nx.dfs_tree(G, root_node))
         else:
-            return list(nx.bfs_tree(G, random.choice(list(G.nodes()))))
+            print('error sort type. using degree1 as default.')
+            return sorted(G.nodes(), key=cmp_to_key(cmp), reverse=1)
+
 
     def __len__(self):
         return len(self.adj_all)
