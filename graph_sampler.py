@@ -155,6 +155,6 @@ class GraphSampler(torch.utils.data.Dataset):
                 'seq_feats': seq_feats_padded,  # self.seq_feature_all[idx].copy(),
                 # 'feats': self.feature_all[idx].copy(),  # 图中节点的属性矩阵 max_num_nodes x feat_dim
                 'label': self.label_all[idx],  # 图的label，ground-truth
-                'num_nodes': num_nodes  # 单个图中节点的数量 （真实数量，没有padding过的）
+                'num_nodes': num_nodes-1  # 单个图中节点的数量 （真实数量，没有padding过的）
                 }
 

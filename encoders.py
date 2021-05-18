@@ -234,7 +234,9 @@ class GSRNN(nn.Module):
             y, h = self.rnn(x)
 
         y = self.to_latent(y)
-        return self.pred(y[:,-1,:])
+
+        # return self.pred(y[:,-1,:])
+        return self.pred(y[range(y.shape[0]), num_nodes, :])
 
     def loss(self, pred, label):
         return F.cross_entropy(pred, label, reduction='mean')
