@@ -107,10 +107,12 @@ def benchmark_task_val(args, writer=None, feat='node-label'):
         all_vals.append(np.array(val_accs))
     all_vals = np.vstack(all_vals)
     all_vals = np.mean(all_vals, axis=0)
-    print(all_vals)
+    print("Mean:----<%s>"%i,all_vals)
     print(np.max(all_vals))
     print(np.argmax(all_vals))
 
+def gen_train_plt_name(args):
+    return 'results/' + gen_prefix(args) + '.png'
 
 def train(dataset, model, args, val_dataset=None, test_dataset=None, writer=None,
           mask_nodes=True):
@@ -217,7 +219,7 @@ def train(dataset, model, args, val_dataset=None, test_dataset=None, writer=None
     else:
         plt.plot(best_val_epochs, best_val_accs, 'bo')
         plt.legend(['train', 'val'])
-    # plt.savefig(gen_train_plt_name(args), dpi=600)
+    plt.savefig(gen_train_plt_name(args), dpi=600)
     plt.close()
     matplotlib.style.use('default')
 
@@ -346,7 +348,7 @@ def arg_parse():
                         lr=0.001,
                         clip=2.0,
                         batch_size=20,
-                        num_epochs=3000,
+                        num_epochs=500,
                         train_ratio=0.8,
                         test_ratio=0.1,
                         num_workers=1,

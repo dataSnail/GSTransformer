@@ -67,9 +67,10 @@ class Attention(nn.Module):
         dots = einsum('b h i d, b h j d -> b h i j', q, k) * self.scale
 
         # mask
-        # print(dots.shape, seq_mask.shape, v.shape)
+        print(dots.shape, seq_mask.shape, v.shape)
         if not (seq_mask is None):
             seq_mask = repeat(seq_mask[:, np.newaxis],'b () d -> b n d', n=dots.shape[2])
+            print(seq_mask.shape)
             seq_mask = repeat(seq_mask[:,np.newaxis], 'b () n d -> b h n d',h=dots.shape[1])
             dots = einsum('b h i j, b h i j->b h i j', dots, seq_mask)
 
