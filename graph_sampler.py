@@ -11,7 +11,8 @@ import util
 class GraphSampler(torch.utils.data.Dataset):
     ''' Sample graphs and nodes in graph
     '''
-    def __init__(self, G_list, features='default', normalize=True, max_num_nodes=0, sort_type='degree1'):
+    def __init__(self, G_list, features='default', normalize=True, max_num_nodes=0, sort_type='degree1', cls_flag=False):
+        self.cls_flag = cls_flag
         self.adj_all = []
         self.graph_seq_all = []
         self.len_all = []
@@ -31,15 +32,20 @@ class GraphSampler(torch.utils.data.Dataset):
         self.feat_dim = util.node_dict(G_list[0])[0]['feat'].shape[0]
 
         for G in G_list:
-            adj = np.array(nx.to_numpy_matrix(G))
-            if normalize:
-                sqrt_deg = np.diag(1.0 / np.sqrt(np.sum(adj, axis=0, dtype=float).squeeze()))
-                adj = np.matmul(np.matmul(sqrt_deg, adj), sqrt_deg)
-            self.adj_all.append(adj)
+            # adj = np.array(nx.to_numpy_matrix(G))
+            # if normalize:
+            #     sqrt_deg = np.diag(1.0 / np.sqrt(np.sum(adj, axis=0, dtype=float).squeeze()))
+            #     adj = np.matmul(np.matmul(sqrt_deg, adj), sqrt_deg)
+            # self.adj_all.append(adj)
 
             # get the graph sequence
             seq = self.graph2seq(G, sort_type)
             self.graph_seq_all.append(seq)
+
+            # generate adj according to sequence
+            adj = np.array(nx.to_numpy_matrix(G,nodelist=seq))
+            self.adj_all.append(adj)
+
 
             self.len_all.append(G.number_of_nodes())
             self.label_all.append(G.graph['label'])
@@ -121,11 +127,19 @@ class GraphSampler(torch.utils.data.Dataset):
         elif sort_type == 'bfs':
             root_node = sorted(G.nodes(), key=cmp_to_key(cmp))[-1]
             return list(nx.bfs_tree(G, root_node))
+        elif sort_type == 'bfs_btw':
+            d = nx.betweenness_centrality(G)
+            root_node = sorted(d.items(),key=lambda d:d[1])[-1][0]
+            return list(nx.bfs_tree(G, root_node))
         elif sort_type == 'bfs_r':
             root_node = random.choice(list(G.nodes()))
             return list(nx.bfs_tree(G, root_node))
         elif sort_type == 'dfs':
             root_node = sorted(G.nodes(), key=cmp_to_key(cmp))[-1]
+            return list(nx.dfs_tree(G, root_node))
+        elif sort_type == 'dfs_btw':
+            d = nx.betweenness_centrality(G)
+            root_node = sorted(d.items(),key=lambda d:d[1])[-1][0]
             return list(nx.dfs_tree(G, root_node))
         elif sort_type == 'dfs_r':
             root_node = random.choice(list(G.nodes()))
@@ -149,9 +163,23 @@ class GraphSampler(torch.utils.data.Dataset):
         seq_feats_padded = np.zeros((self.max_num_nodes, self.feat_dim))
         seq_feats_padded[:num_nodes,:] = seq_feats  # padding图的序列
 
+        adj = self.adj_all[idx]
+        num_nodes = adj.shape[0]
+        if self.cls_flag:
+            adj_cls = np.ones([num_nodes + 1, num_nodes + 1])
+            adj_cls[1:, 1:] = adj
+            adj_padded = np.zeros((self.max_num_nodes+1, self.max_num_nodes+1))
+            adj_padded[:num_nodes+1, :num_nodes+1] = adj_cls
+        else:
+            adj_padded = np.zeros((self.max_num_nodes, self.max_num_nodes))
+            adj_padded[:num_nodes, :num_nodes] = adj
+
+
+
         # use all nodes for aggregation (baseline)
 
-        return {'sequence': graph_seq_padded,  # node id of sequence
+        return {'adj': adj_padded,
+                'sequence': graph_seq_padded,  # node id of sequence
                 'seq_feats': seq_feats_padded,  # self.seq_feature_all[idx].copy(),
                 # 'feats': self.feature_all[idx].copy(),  # 图中节点的属性矩阵 max_num_nodes x feat_dim
                 'label': self.label_all[idx],  # 图的label，ground-truth

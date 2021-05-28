@@ -37,13 +37,14 @@ def evaluate(dataset, model, args, name='Validation', max_num_examples=None):
     labels = []
     preds = []
     for batch_idx, data in enumerate(dataset):
+        adj = Variable(data['adj'].float(), requires_grad=False).cuda()
         seq_feats = Variable(data['seq_feats'].float(), requires_grad=False).cuda()
         # h0 = Variable(data['feats'].float()).cuda()
         labels.append(data['label'].long().numpy())
         batch_num_nodes = data['num_nodes'].int().numpy()
         # assign_input = Variable(data['assign_feats'].float(), requires_grad=False).cuda()
 
-        ypred = model(seq_feats, batch_num_nodes)
+        ypred = model(adj, seq_feats, batch_num_nodes)  # bugs if use RNN-liked model, as has no adj parameter
         _, indices = torch.max(ypred, 1)
         preds.append(indices.cpu().data.numpy())
 
@@ -147,11 +148,12 @@ def train(dataset, model, args, val_dataset=None, test_dataset=None, writer=None
         for batch_idx, data in enumerate(dataset):
             begin_time = time.time()
             model.zero_grad()
+            adj = Variable(data['adj'].float(), requires_grad=False).cuda()
             seq_feats = Variable(data['seq_feats'].float(), requires_grad=False).cuda()
             label = Variable(data['label'].long()).cuda()
             batch_num_nodes = data['num_nodes'].int().numpy() if mask_nodes else None
 
-            ypred = model(seq_feats, batch_num_nodes)
+            ypred = model(adj, seq_feats, batch_num_nodes)
 
             loss = model.loss(ypred, label)
             # if not args.method == 'soft-assign' or not args.linkpred:
@@ -232,12 +234,7 @@ def gen_prefix(args):
     else:
         name = args.dataset
     name += '_' + args.method
-    if args.method == 'soft-assign':
-        name += '_l' + str(args.num_gc_layers) + 'x' + str(args.num_pool)
-        name += '_ar' + str(int(args.assign_ratio*100))
-        if args.linkpred:
-            name += '_lp'
-    elif args.method == 'GSTransformer':
+    if args.method == 'GSTransformer':
         name += '_dim' + str(args.dim) + '_mlpDim' + str(args.mlp_dim)
         name += '_tansLayer' + str(args.num_trans_layers) + '_heads'+str(args.num_heads) + '_lr'+str(args.lr)
         name += '_'+str(args.pool) + '_' + str(args.sort_type) + '_nomask'
@@ -326,6 +323,9 @@ def arg_parse():
     parser.add_argument('--no-mask', dest='no_mask', action='store_const',
             const=False, default=True,
             help="Whether to add mask to sequence.")
+    parser.add_argument('--cls', dest='cls_flag', action='store_const',
+            const=True, default=False,
+            help="Whether to add mask to sequence.")
     parser.add_argument('--no-log-graph', dest='log_graph', action='store_const',
             const=False, default=True,
             help='Whether disable log graph')
@@ -348,7 +348,7 @@ def arg_parse():
                         lr=0.001,
                         clip=2.0,
                         batch_size=20,
-                        num_epochs=500,
+                        num_epochs=1000,
                         train_ratio=0.8,
                         test_ratio=0.1,
                         num_workers=1,

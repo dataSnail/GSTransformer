@@ -69,7 +69,7 @@ class Attention(nn.Module):
         # mask
         # print(dots.shape, seq_mask.shape, v.shape)
         if not (seq_mask is None):
-            seq_mask = repeat(seq_mask[:, np.newaxis],'b () d -> b n d', n=dots.shape[2])
+            # seq_mask = repeat(seq_mask[:, np.newaxis],'b () d -> b n d', n=dots.shape[2])  #
             seq_mask = repeat(seq_mask[:,np.newaxis], 'b () n d -> b h n d',h=dots.shape[1])
             dots = einsum('b h i j, b h i j->b h i j', dots, seq_mask)
             dots = dots.masked_fill(dots == 0, -1e9)
@@ -124,13 +124,14 @@ class GSTransformer(nn.Module):
             )
 
     def _generate_seq_mask(self, bz, ntoken, num_nodes):
-        pad_mask = torch.ones((bz, ntoken), dtype=torch.bool)
+        pad_mask = torch.ones((bz, ntoken, ntoken), dtype=torch.bool)
 
         for index, item in enumerate(num_nodes):
             pad_mask[index, item+1:] = 0  # 已经加上cls位了
+            pad_mask[index, :, item + 1:] = 0  # 已经加上cls位了
         return pad_mask
 
-    def forward(self, seq_feats, num_nodes):
+    def forward(self, adj, seq_feats, num_nodes):
         x = self.to_embedding(seq_feats)
         b, n, _ = x.shape
         cls_tokens = repeat(self.cls_token, '() n d -> b n d', b = b)
@@ -139,19 +140,21 @@ class GSTransformer(nn.Module):
         x += self.pos_embedding[:, :(n + 1)]
         x = self.dropout(x)
 
-        if self.has_mask:
-            device = x.device
-            if self.seq_mask is None or self.seq_mask.size(0) != len(seq_feats):
-                # print('using sequence padding mask...')
-                bz = x.size(0)  # seq_feats.size(0)
-                ntoken = x.size(1)  # seq_feats.size(1)+1
-                mask = self._generate_seq_mask(bz, ntoken, num_nodes).to(device)
-                self.seq_mask = mask
-        else:
-            # print('Do NOT use sequence padding mask...')
-            self.seq_mask = None
+        # if self.has_mask:
+        #     device = x.device
+        #     if self.seq_mask is None or self.seq_mask.size(0) != len(seq_feats):
+        #         # print('using sequence padding mask...')
+        #         bz = x.size(0)  # seq_feats.size(0)
+        #         ntoken = x.size(1)  # seq_feats.size(1)+1
+        #         mask = self._generate_seq_mask(bz, ntoken, num_nodes).to(device)
+        #         self.seq_mask = mask
+        # else:
+        #     # print('Do NOT use sequence padding mask...')
+        #     self.seq_mask = None
 
-        x = self.transformer(x,self.seq_mask)
+        # x = self.transformer(x,self.seq_mask)
+
+        x = self.transformer(x,adj)
 
         x = x.mean(dim=1) if self.pool == 'mean' else x[:, 0]
 
