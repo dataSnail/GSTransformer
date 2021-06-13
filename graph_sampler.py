@@ -166,10 +166,11 @@ class GraphSampler(torch.utils.data.Dataset):
         adj = self.adj_all[idx]
         num_nodes = adj.shape[0]
         if self.cls_flag:
-            adj_cls = np.ones([num_nodes + 1, num_nodes + 1])
+            num_nodes = num_nodes+1
+            adj_cls = np.ones([num_nodes, num_nodes])
             adj_cls[1:, 1:] = adj
             adj_padded = np.zeros((self.max_num_nodes+1, self.max_num_nodes+1))
-            adj_padded[:num_nodes+1, :num_nodes+1] = adj_cls
+            adj_padded[:num_nodes, :num_nodes] = adj_cls
         else:
             adj_padded = np.zeros((self.max_num_nodes, self.max_num_nodes))
             adj_padded[:num_nodes, :num_nodes] = adj
@@ -177,12 +178,13 @@ class GraphSampler(torch.utils.data.Dataset):
 
 
         # use all nodes for aggregation (baseline)
+        # print(adj_padded.shape,seq_feats_padded.shape)
 
         return {'adj': adj_padded,
                 'sequence': graph_seq_padded,  # node id of sequence
                 'seq_feats': seq_feats_padded,  # self.seq_feature_all[idx].copy(),
                 # 'feats': self.feature_all[idx].copy(),  # 图中节点的属性矩阵 max_num_nodes x feat_dim
                 'label': self.label_all[idx],  # 图的label，ground-truth
-                'num_nodes': num_nodes-1  # 单个图中节点的数量 （真实数量，没有padding过的）
+                'num_nodes': num_nodes  # 单个图中节点的数量 （真实数量，没有padding过的）
                 }
 

@@ -26,8 +26,9 @@ def prepare_val_data(graphs, args, val_idx, max_nodes=0):
             "{0:.2f}".format(np.std([G.number_of_nodes() for G in graphs])))
 
     # minibatch
+    cls_flag = True if args.pool == 'cls' else False
     dataset_sampler = GraphSampler(train_graphs, normalize=False, max_num_nodes=max_nodes,
-            features=args.feature_type, sort_type=args.sort_type, cls_flag=args.cls_flag)
+            features=args.feature_type, sort_type=args.sort_type, cls_flag=cls_flag)
     train_dataset_loader = torch.utils.data.DataLoader(
             dataset_sampler, 
             batch_size=args.batch_size, 
@@ -35,7 +36,7 @@ def prepare_val_data(graphs, args, val_idx, max_nodes=0):
             num_workers=args.num_workers)
 
     dataset_sampler = GraphSampler(val_graphs, normalize=False, max_num_nodes=max_nodes,
-            features=args.feature_type, sort_type=args.sort_type, cls_flag=args.cls_flag)
+            features=args.feature_type, sort_type=args.sort_type, cls_flag=cls_flag)
     val_dataset_loader = torch.utils.data.DataLoader(
             dataset_sampler, 
             batch_size=args.batch_size, 

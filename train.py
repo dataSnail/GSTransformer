@@ -90,7 +90,7 @@ def benchmark_task_val(args, writer=None, feat='node-label'):
             print('Method: %s, Mask_flag: %s' % (args.method, args.no_mask))
             model = encoders.GSTransformer(
                     max_num_nodes, input_dim, args.dim, args.num_heads, args.mlp_dim, args.num_trans_layers, args.num_classes,
-                    pool=args.pool, dropout=args.dropout, has_mask=args.no_mask).cuda()
+                    pool=args.pool, dropout=args.dropout, has_mask=args.no_mask, mask_type=args.mask_type).cuda()
         elif args.method == 'GSRNN':
             # RNN-liked methods args.mlp_dim: hidden_size; args.num_trans_layers: num_layers
             print('Method: %s'%args.method)
@@ -238,21 +238,19 @@ def gen_prefix(args):
         name += '_dim' + str(args.dim) + '_mlpDim' + str(args.mlp_dim)
         name += '_tansLayer' + str(args.num_trans_layers) + '_heads'+str(args.num_heads) + '_lr'+str(args.lr)
         name += '_'+str(args.pool) + '_' + str(args.sort_type) + '_nomask'
+        name += '_'+str(args.mask_type)
         if args.linkpred:
             name += '_lp'
     else:
-        name += '_l' + str(args.num_gc_layers)
-    if not (args.method == 'GSTransformer'):
         name += '_h' + str(args.hidden_dim) + '_o' + str(args.output_dim)
-    if not args.bias:
-        name += '_nobias'
+
     if len(args.name_suffix) > 0:
         name += '_' + args.name_suffix
     return name
 
 
 def arg_parse():
-    parser = argparse.ArgumentParser(description='GraphPool arguments.')
+    parser = argparse.ArgumentParser(description='GSTransformer arguments.')
     io_parser = parser.add_mutually_exclusive_group(required=False)
     io_parser.add_argument('--dataset', dest='dataset',
             help='Input dataset.')
@@ -306,8 +304,7 @@ def arg_parse():
             help='Number of label classes')
     parser.add_argument('--num-heads', dest='num_heads', type=int,
             help='Head number of transformer')
-    parser.add_argument('--num-gc-layers', dest='num_gc_layers', type=int,
-            help='Number of graph convolution layers before each pooling')
+
     parser.add_argument('--num-trans-layers', dest='num_trans_layers', type=int,
             help='Number of Transformer layers')
     parser.add_argument('--mlp-dim', dest='mlp_dim', type=int,
@@ -317,19 +314,17 @@ def arg_parse():
             help='Whether batch normalization is used')
     parser.add_argument('--dropout', dest='dropout', type=float,
             help='Dropout rate.')
-    parser.add_argument('--nobias', dest='bias', action='store_const',
-            const=False, default=True,
-            help='Whether to add bias. Default to True.')
     parser.add_argument('--no-mask', dest='no_mask', action='store_const',
             const=False, default=True,
             help="Whether to add mask to sequence.")
-    parser.add_argument('--cls', dest='cls_flag', action='store_const',
-            const=True, default=False,
-            help="Whether to add mask to sequence.")
+    # parser.add_argument('--cls', dest='cls_flag', action='store_const',
+    #         const=True, default=False,
+    #         help="Whether to add mask to sequence.")
     parser.add_argument('--no-log-graph', dest='log_graph', action='store_const',
             const=False, default=True,
             help='Whether disable log graph')
-
+    parser.add_argument('--mask', dest='mask_type',
+            help='Method. Possible values: base, base-set2set, soft-assign')
     parser.add_argument('--method', dest='method',
             help='Method. Possible values: base, base-set2set, soft-assign')
     parser.add_argument('--sort-type', dest='sort_type',
@@ -352,9 +347,9 @@ def arg_parse():
                         train_ratio=0.8,
                         test_ratio=0.1,
                         num_workers=1,
-                        input_dim=10,
-                        hidden_dim=20,
-                        output_dim=20,
+                        # input_dim=10,
+                        # hidden_dim=20,
+                        # output_dim=20,
                         num_classes=2,
                         num_heads=8,
                         num_gc_layers=3,
@@ -363,8 +358,7 @@ def arg_parse():
                         pool='cls',
                         sort_type='degree1',
                         name_suffix='',
-                        assign_ratio=0.1,
-                        num_pool=1
+                        mask_type='seq'
                        )
     return parser.parse_args()
 
@@ -383,7 +377,7 @@ def main():
     print('CUDA', prog_args.cuda)
 
     if prog_args.bmname is not None:
-        benchmark_task_val(prog_args, writer=writer, feat='node-feat')
+        benchmark_task_val(prog_args, writer=writer, feat='node-label')
 
     writer.close()
 

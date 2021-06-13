@@ -82,7 +82,7 @@ def read_graphfile(datadir, dataname, max_nodes=None):
         for line in f:
             line = line.strip("\n").split(",")
             e0, e1 = (int(line[0].strip(" ")), int(line[1].strip(" ")))
-            adj_list[graph_indic[e0]].append((e0, e1))
+            adj_list[graph_indic[e0]].append((e0, e1))  # graph_indic refers to the nodeid's graphid
             index_graph[graph_indic[e0]] += [e0, e1]
             num_edges += 1
     for k in index_graph.keys():
@@ -117,4 +117,5 @@ def read_graphfile(datadir, dataname, max_nodes=None):
 
         # indexed from 0
         graphs.append(nx.relabel_nodes(G, mapping))
+
     return graphs
