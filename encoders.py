@@ -186,7 +186,7 @@ class GSTransformer(nn.Module):
             cls_tokens = repeat(self.cls_token, '() n d -> b n d', b = b)
             x = torch.cat((cls_tokens, x), dim=1)
         # x += self.pos_embedding[:, :(n + 1)]
-        x = self.pos_embedding(x)
+        # x = self.pos_embedding(x)
         x = self.dropout(x)
 
         if self.mask_type == 'seq':
