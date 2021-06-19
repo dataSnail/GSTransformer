@@ -19,6 +19,7 @@ class GraphSampler(torch.utils.data.Dataset):
         self.feature_all = []  # 按seq中id选择feature的列表
         self.seq_feature_all = []
         self.label_all = []
+        self.sort_type = sort_type
 
         if max_num_nodes == 0:
             # find the max number of nodes in all graph list.
@@ -32,18 +33,18 @@ class GraphSampler(torch.utils.data.Dataset):
         self.feat_dim = util.node_dict(G_list[0])[0]['feat'].shape[0]
 
         for G in G_list:
-            # adj = np.array(nx.to_numpy_matrix(G))
-            # if normalize:
-            #     sqrt_deg = np.diag(1.0 / np.sqrt(np.sum(adj, axis=0, dtype=float).squeeze()))
-            #     adj = np.matmul(np.matmul(sqrt_deg, adj), sqrt_deg)
-            # self.adj_all.append(adj)
 
             # get the graph sequence
-            seq = self.graph2seq(G, sort_type)
+            seq = self.graph2seq(G, self.sort_type)
             self.graph_seq_all.append(seq)
 
             # generate adj according to sequence
-            adj = np.array(nx.to_numpy_matrix(G,nodelist=seq))
+            if self.sort_type == 'all':
+                adj = []
+                for seq_item in seq:
+                    adj.append(np.array(nx.to_numpy_matrix(G, nodelist=seq_item)))
+            else:
+                adj = np.array(nx.to_numpy_matrix(G, nodelist=seq))
             self.adj_all.append(adj)
 
 
@@ -103,8 +104,15 @@ class GraphSampler(torch.utils.data.Dataset):
                 self.feature_all.append(g_feat)
 
             seq_feats = []  # adding sequence features
-            for u in seq:
-                seq_feats.append(self.feature_all[-1][u])
+            if self.sort_type == 'all':
+                for seq_item in seq:
+                    seq_feats_tem = []
+                    for u in seq_item:
+                        seq_feats_tem.append(self.feature_all[-1][u])
+                    seq_feats.append(seq_feats_tem)
+            else:
+                for u in seq:
+                    seq_feats.append(self.feature_all[-1][u])
 
             self.seq_feature_all.append(seq_feats)
 
@@ -144,6 +152,9 @@ class GraphSampler(torch.utils.data.Dataset):
         elif sort_type == 'dfs_r':
             root_node = random.choice(list(G.nodes()))
             return list(nx.dfs_tree(G, root_node))
+        elif sort_type == 'all':
+            root_node = sorted(G.nodes(), key=cmp_to_key(cmp))[-1]
+            return [list(nx.dfs_tree(G, root_node)), list(nx.bfs_tree(G, root_node))]
         else:
             print('error sort type. using degree1 as default.')
             return sorted(G.nodes(), key=cmp_to_key(cmp), reverse=1)
@@ -153,27 +164,54 @@ class GraphSampler(torch.utils.data.Dataset):
         return len(self.adj_all)
 
     def __getitem__(self, idx):
-        graph_seq = self.graph_seq_all[idx]
-        num_nodes = len(graph_seq)
-        graph_seq_padded = np.zeros(self.max_num_nodes)
-        graph_seq_padded[:num_nodes] = graph_seq  # padding图的序列
+        if self.sort_type == 'all':
+            graph_seq = self.graph_seq_all[idx][0]
+            num_nodes = len(graph_seq)
+            graph_seq_padded = np.zeros((len(self.graph_seq_all[idx]), self.max_num_nodes))
+            for index, graph_seq in enumerate(self.graph_seq_all[idx]):
+                graph_seq_padded[index, :num_nodes] = graph_seq  # padding图的序列
 
-        seq_feats = self.seq_feature_all[idx]
-        num_nodes = len(seq_feats)
-        seq_feats_padded = np.zeros((self.max_num_nodes, self.feat_dim))
-        seq_feats_padded[:num_nodes,:] = seq_feats  # padding图的序列
+            seq_feats = self.seq_feature_all[idx][0]
+            num_nodes = len(seq_feats)
+            seq_feats_padded = np.zeros((len(self.seq_feature_all[idx]), self.max_num_nodes, self.feat_dim))
+            for index, seq_feats in enumerate(self.seq_feature_all[idx]):
+                seq_feats_padded[index, :num_nodes, :] = seq_feats  # padding图的序列
 
-        adj = self.adj_all[idx]
-        num_nodes = adj.shape[0]
-        if self.cls_flag:
-            num_nodes = num_nodes+1
-            adj_cls = np.ones([num_nodes, num_nodes])
-            adj_cls[1:, 1:] = adj
-            adj_padded = np.zeros((self.max_num_nodes+1, self.max_num_nodes+1))
-            adj_padded[:num_nodes, :num_nodes] = adj_cls
+            adj = self.adj_all[idx][0]
+            num_nodes = adj.shape[0]
+            adj_padded = np.zeros((len(self.adj_all[idx]), self.max_num_nodes + self.cls_flag, self.max_num_nodes + self.cls_flag))
+            for index, adj in enumerate(self.adj_all[idx]):
+                if self.cls_flag:
+                    num_nodes = num_nodes + 1
+                    adj_cls = np.ones([num_nodes, num_nodes])
+                    adj_cls[1:, 1:] = adj
+                    # adj_padded = np.zeros((self.max_num_nodes + 1, self.max_num_nodes + 1))
+                    adj_padded[index, :num_nodes, :num_nodes] = adj_cls
+                else:
+                    # adj_padded = np.zeros((self.max_num_nodes, self.max_num_nodes))
+                    adj_padded[index, :num_nodes, :num_nodes] = adj
         else:
-            adj_padded = np.zeros((self.max_num_nodes, self.max_num_nodes))
-            adj_padded[:num_nodes, :num_nodes] = adj
+            graph_seq = self.graph_seq_all[idx]
+            num_nodes = len(graph_seq)
+            graph_seq_padded = np.zeros(self.max_num_nodes)
+            graph_seq_padded[:num_nodes] = graph_seq  # padding图的序列
+
+            seq_feats = self.seq_feature_all[idx]
+            num_nodes = len(seq_feats)
+            seq_feats_padded = np.zeros((self.max_num_nodes, self.feat_dim))
+            seq_feats_padded[:num_nodes,:] = seq_feats  # padding图的序列
+
+            adj = self.adj_all[idx]
+            num_nodes = adj.shape[0]
+            if self.cls_flag:
+                num_nodes = num_nodes+1
+                adj_cls = np.ones([num_nodes, num_nodes])
+                adj_cls[1:, 1:] = adj
+                adj_padded = np.zeros((self.max_num_nodes+1, self.max_num_nodes+1))
+                adj_padded[:num_nodes, :num_nodes] = adj_cls
+            else:
+                adj_padded = np.zeros((self.max_num_nodes, self.max_num_nodes))
+                adj_padded[:num_nodes, :num_nodes] = adj
 
 
 

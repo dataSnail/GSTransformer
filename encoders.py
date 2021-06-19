@@ -144,30 +144,51 @@ class GSTransformer(nn.Module):
         super(GSTransformer, self).__init__()
         self.model_type = 'Transformer'
         self.has_mask = has_mask
-        self.mask_type = mask_type
-        print(self.mask_type,self.has_mask)
+        self.mask_type = mask_type  # seq seqall adj
+        print('Mask type: %s, Mask flag: %s.'%(self.mask_type,self.has_mask))
 
-        self.to_embedding = nn.Sequential(
-            nn.Linear(token_dim, dim),
-        )
+        if self.mask_type == 'seqall':
+            seq_num = 2  #  TODO magic number 2
+            self.attention_final = nn.Parameter(torch.randn(1,mlp_dim)).cuda()
+            self.to_embedding = nn.ModuleList([nn.Sequential(
+                nn.Linear(token_dim, dim),
+            ) for _ in range(seq_num)])
+            # for i,to_emb in enumerate(self.to_embedding):
+            #     self.add_module('to_emb_{}'.format(i), to_emb)
 
-        # self.pos_embedding = nn.Parameter(torch.randn(1, token_num + 1, dim))
-        self.pos_embedding = PositionalEncoding(dim, dropout)
+            self.pos_embedding = nn.ModuleList([PositionalEncoding(dim, dropout) for _ in range(seq_num)])
+            # for i,pos_emb in enumerate(self.pos_embedding):
+            #     self.add_module('pos_emb_{}'.format(i), pos_emb)
+            self.cls_token = nn.ModuleList([nn.Parameter(torch.randn(1, 1, dim)) for _ in range(seq_num)])
+            self.transformer = nn.ModuleList([Transformer(dim, nlayers, heads, dim_head, mlp_dim, dropout) for _ in range(seq_num)])
+            # for i,ts in enumerate(self.transformer):
+            #     self.add_module('transformer_{}'.format(i), ts)
+            # self.to_latent = [nn.Identity() for _ in range(seq_num)]
+        else:
+            self.to_embedding = nn.Sequential(
+                nn.Linear(token_dim, dim),
+            )
+            # self.pos_embedding = nn.Parameter(torch.randn(1, token_num + 1, dim))
+            self.pos_embedding = PositionalEncoding(dim, dropout)
+            self.cls_token = nn.Parameter(torch.randn(1, 1, dim))
+            self.transformer = Transformer(dim, nlayers, heads, dim_head, mlp_dim, dropout)
 
-        self.cls_token = nn.Parameter(torch.randn(1, 1, dim))
+        self.to_latent = nn.Identity()
+
         self.dropout = nn.Dropout(emb_dropout)
 
         self.seq_mask = None
 
-        self.transformer = Transformer(dim, nlayers, heads, dim_head, mlp_dim, dropout)
-
         self.pool = pool
-        self.to_latent = nn.Identity()
 
         self.pred = nn.Sequential(
                 nn.LayerNorm(dim),
                 nn.Linear(dim, nclass)
             )
+        self.init_parameters()
+
+    def init_parameters(self):
+
 
     def _generate_seq_mask(self, bz, ntoken, num_nodes,pool):
         if pool == 'cls':
@@ -180,14 +201,33 @@ class GSTransformer(nn.Module):
         return pad_mask
 
     def forward(self, adj, seq_feats, num_nodes):
-        x = self.to_embedding(seq_feats)
-        if self.pool == 'cls':
-            b, n, _ = x.shape
-            cls_tokens = repeat(self.cls_token, '() n d -> b n d', b = b)
-            x = torch.cat((cls_tokens, x), dim=1)
-        # x += self.pos_embedding[:, :(n + 1)]
-        # x = self.pos_embedding(x)
-        x = self.dropout(x)
+        device = adj.device
+        if self.mask_type == 'seqall':
+            seq_num = len(adj[1])
+            x_ls = []
+
+            for index in range(seq_num):
+                seq_feats_tem = seq_feats[:,index,:,:].squeeze()
+                x = seq_feats_tem.to(device)
+                x = self.to_embedding[index](x)
+                if self.pool == 'cls':
+                    b, n, _ = x.shape
+                    cls_tokens = repeat(self.cls_token[index], '() n d -> b n d', b=b)
+                    x = torch.cat((cls_tokens, x), dim=1)
+                # x += self.pos_embedding[:, :(n + 1)]
+                x = self.pos_embedding[index](x)
+                x = self.dropout(x)
+                x_ls.append(x)
+
+        else:
+            x = self.to_embedding(seq_feats)
+            if self.pool == 'cls':
+                b, n, _ = x.shape
+                cls_tokens = repeat(self.cls_token, '() n d -> b n d', b = b)
+                x = torch.cat((cls_tokens, x), dim=1)
+            # x += self.pos_embedding[:, :(n + 1)]
+            x = self.pos_embedding(x)
+            x = self.dropout(x)
 
         if self.mask_type == 'seq':
             if self.has_mask:
@@ -203,10 +243,24 @@ class GSTransformer(nn.Module):
                 self.seq_mask = None
 
             x = self.transformer(x,self.seq_mask)
+            x = x.mean(dim=1) if self.pool == 'mean' else x[:, 0]
         elif self.mask_type == 'adj':
             x = self.transformer(x,adj)
+            x = x.mean(dim=1) if self.pool == 'mean' else x[:, 0]
+        elif self.mask_type == 'seqall':
+            for index,x in enumerate(x_ls):
+                adj_tem = adj[:,index,:,:].squeeze()
+                x = self.transformer[index](x, adj_tem)
+                x = x.mean(dim=1) if self.pool == 'mean' else x[:, 0]
+                x_ls[index] = x
 
-        x = x.mean(dim=1) if self.pool == 'mean' else x[:, 0]
+            # x = torch.mean(torch.stack(x_ls), 0)
+
+            x = torch.stack(x_ls,dim=1)
+            att = torch.softmax(x.matmul(self.attention_final.T),dim=1)
+            x = (x*att).sum(dim=1)
+
+
 
         x = self.to_latent(x)
         return self.pred(x)
