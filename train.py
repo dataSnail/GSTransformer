@@ -100,8 +100,12 @@ def benchmark_task_val(args, writer=None, feat='node-label'):
             print('Method: %s'%args.method)
             model = encoders.GSRNN(
                 input_dim, args.dim, args.mlp_dim, args.num_trans_layers, args.num_classes, 1).cuda()
+        elif args.method == 'GSBiLSTM':
+            print('Method: %s'%args.method)
+            model = encoders.GSRNN(
+                input_dim, args.dim, args.mlp_dim, args.num_trans_layers, args.num_classes, 2, 12).cuda()
         else:
-            print("ERROR Methods!!!")
+            print("ERROR Methods: %s!!!!"%args.method)
             exit(1)
         _, val_accs = train(train_dataset, model, args, val_dataset=val_dataset, test_dataset=None,
             writer=writer)
@@ -337,7 +341,7 @@ def arg_parse():
     parser.set_defaults(datadir='data',
                         logdir='log',
                         dataset='syn1v2',
-                        max_nodes=1000,
+                        max_nodes=0,
                         cuda='1',
                         feature_type='default',
                         lr=0.001,

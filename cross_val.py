@@ -27,7 +27,7 @@ def prepare_val_data(graphs, args, val_idx, max_nodes=0):
 
     # minibatch
     cls_flag = True if args.pool == 'cls' else False
-    dataset_sampler = GraphSampler(train_graphs, normalize=False, max_num_nodes=max_nodes,
+    dataset_sampler = GraphSampler(train_graphs, max_num_nodes=max_nodes,
             features=args.feature_type, sort_type=args.sort_type, cls_flag=cls_flag)
     train_dataset_loader = torch.utils.data.DataLoader(
             dataset_sampler, 
@@ -35,7 +35,7 @@ def prepare_val_data(graphs, args, val_idx, max_nodes=0):
             shuffle=True,
             num_workers=args.num_workers)
 
-    dataset_sampler = GraphSampler(val_graphs, normalize=False, max_num_nodes=max_nodes,
+    dataset_sampler = GraphSampler(val_graphs, max_num_nodes=max_nodes,
             features=args.feature_type, sort_type=args.sort_type, cls_flag=cls_flag)
     val_dataset_loader = torch.utils.data.DataLoader(
             dataset_sampler, 

@@ -159,7 +159,7 @@ class GSTransformer(nn.Module):
             self.pos_embedding = nn.ModuleList([PositionalEncoding(dim, dropout) for _ in range(seq_num)])
             # for i,pos_emb in enumerate(self.pos_embedding):
             #     self.add_module('pos_emb_{}'.format(i), pos_emb)
-            self.cls_token = nn.ModuleList([nn.Parameter(torch.randn(1, 1, dim)) for _ in range(seq_num)])
+            self.cls_token = [nn.Parameter(torch.randn(1, 1, dim)) for _ in range(seq_num)]
             self.transformer = nn.ModuleList([Transformer(dim, nlayers, heads, dim_head, mlp_dim, dropout) for _ in range(seq_num)])
             # for i,ts in enumerate(self.transformer):
             #     self.add_module('transformer_{}'.format(i), ts)
@@ -188,6 +188,7 @@ class GSTransformer(nn.Module):
         self.init_parameters()
 
     def init_parameters(self):
+        pass
 
 
     def _generate_seq_mask(self, bz, ntoken, num_nodes,pool):
@@ -309,7 +310,7 @@ class GSTransformer(nn.Module):
 
 
 class GSRNN(nn.Module):
-    def __init__(self, token_dim, dim, hidden_size, num_layers, nclass, net_type=0):  # nonlinearity='tanh', bias=False, batch_first=True, dropout=0., bidirectional=False
+    def __init__(self, token_dim, dim, hidden_size, num_layers, nclass, net_type=0, seq_num=2):  # nonlinearity='tanh', bias=False, batch_first=True, dropout=0., bidirectional=False
         super(GSRNN, self).__init__()
         self.net_type=net_type
         self.hidden_size = hidden_size
@@ -322,6 +323,11 @@ class GSRNN(nn.Module):
         if self.net_type == 1:
             self.model_type = 'GSLSTM'
             self.rnn = nn.LSTM(dim, self.hidden_size, self.num_layers, batch_first=True)
+        elif self.net_type == 2:
+            self.model_type = 'MGSLSTM'
+            self.rnn = nn.ModuleList(
+                [nn.LSTM(dim, self.hidden_size, self.num_layers, batch_first=True) for _ in range(seq_num)]
+            )
         else:
             self.model_type = 'GSRNN'
             self.rnn = nn.RNN(dim, self.hidden_size, self.num_layers, batch_first=True)
@@ -332,19 +338,35 @@ class GSRNN(nn.Module):
                 nn.Linear(self.hidden_size, nclass)
             )
 
-    def forward(self, seq_feats, num_nodes):
-        x = self.to_embedding(seq_feats)
+    def forward(self, adj, seq_feats, num_nodes):
+        # print(self.net_type)
         if self.net_type == 1:
+            x = self.to_embedding(seq_feats)
             h0 = torch.zeros(self.num_layers,x.size(0),self.hidden_size).cuda()
             c0 = torch.zeros(self.num_layers,x.size(0),self.hidden_size).cuda()
             y, (h, c) = self.rnn(x, (h0,c0))
+            y = y[range(y.shape[0]), num_nodes - 1, :]
+
+        elif self.net_type == 2:
+            y_ls = []
+            for index, rnnlayer in enumerate(self.rnn):
+                x = self.to_embedding(seq_feats[:,index,:,:].squeeze())
+                h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).cuda()
+                c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).cuda()
+                y, (h, c) = rnnlayer(x, (h0,c0))
+                y_ls.append(y[range(y.shape[0]), num_nodes-1, :])
+
+            y = torch.mean(torch.stack(y_ls), 0)
+
         else:
+            x = self.to_embedding(seq_feats)
             y, h = self.rnn(x)
+            y = y[range(y.shape[0]), num_nodes - 1, :]
 
         y = self.to_latent(y)
-
-        # return self.pred(y[:,-1,:])
-        return self.pred(y[range(y.shape[0]), num_nodes, :])
+        return self.pred(y)
 
     def loss(self, pred, label):
         return F.cross_entropy(pred, label, reduction='mean')
+
+
