@@ -111,13 +111,16 @@ log/
 runs/
 vis/
 
-data/
-data/REDDIT-MULTI-12K/
-data/COLLAB
-data/PROTEINS
-data/PROTEINS_full
-data/NCI1
+#data/
+#data/REDDIT-MULTI-12K/
+#data/COLLAB
+#data/PROTEINS
+#data/PROTEINS_full
+#data/NCI1
+
+.DS_Store
 
 # pycharm 
 .idea
+
 
